@@ -154,6 +154,9 @@ function get_current_url() {
 	return $protocol . "://" . $_SERVER["SERVER_NAME"] . $port . $requestURI[0];
 }
 
+/*
+* Deletes all GoogleAPI variables set during configuration
+*/
 function delete_googleAPI_vars() {
 	variable_del("googleApiClientId");
 	variable_del("googleApiClientSecret");
