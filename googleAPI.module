@@ -1,0 +1,295 @@
+<?php
+require_once("google-api-php-client/src/apiClient.php");
+require_once("google-api-php-client/src/contrib/apiAnalyticsService.php");
+
+define("SCOPE", "https://www.googleapis.com/auth/analytics.readonly");
+
+class AuthenticatedClient {
+	public $authMethod;
+	public $client;
+	
+	public function __construct($client, $authMethod) {
+		$this->client = $client;
+		$this->authMethod = $authMethod;
+		
+		return call_user_func(array('self', $this->authMethod));
+	}
+	
+	public function refresh_token() {
+		$this->client -> setClientId(variable_get("googleApiClientId", ""));
+		$this->client -> setClientSecret(variable_get("googleApiClientSecret", ""));
+		$this->client -> refreshToken(variable_get('googleApiRefreshToken', ""));
+		
+		try{
+			self::set_google_api_variables($this->client);
+			return $this->client;
+		}
+		catch (Exception $e) {
+			return Null;
+		}
+	}
+	
+	public function full_auth() {
+		$this->client -> setClientId(variable_get("googleApiClientId", ""));
+		$this->client -> setClientSecret(variable_get("googleApiClientSecret", ""));
+		$this->client -> setRedirectUri(get_current_url());
+		$this->client -> setScopes(SCOPE);
+	
+		$this->client -> authenticate();
+		
+		try{
+			self::set_google_api_variables($this->client);
+			return $this->client;
+		}
+		catch (Exception $e) {
+			return Null;
+		}
+	}
+	
+	public function access_token() {
+		try {
+			$this->client -> setAccessToken(variable_get("googleApiFullResponse", ""));
+			return $this->client;
+		}
+		catch (Exception $e) {
+			return Null;
+		}
+	}
+	
+	public function set_google_api_variables() {
+		$tokenJSON = json_decode($this->client -> getAccessToken(), true);
+		
+		variable_set("googleApiFullResponse", $this->client -> getAccessToken());
+		variable_set("googleApiAccessToken", $tokenJSON['access_token']);
+		variable_set("googleApiTokenExpires", $tokenJSON['created'] + $tokenJSON['expires_in']);
+		
+		if ($tokenJSON['refresh_token']) {
+			variable_set("googleApiRefreshToken", $tokenJSON['refresh_token']);
+		}
+	}
+	
+	public function getAccessToken() {
+		return "Access token: " . variable_get("googleApiFullResponse", "");
+	}
+}
+
+function get_profiles($service) {
+	$profiles = $service->management_profiles->listManagementProfiles("~all", "~all", array('fields' => "items(id,name)"));
+	$profileList = array();
+	foreach ($profiles['items'] as $profile) {
+		$profileList[$profile['id']] = $profile['name'];
+	}
+	
+	return $profileList;
+}
+
+function get_current_url() {
+	$s = empty($_SERVER["HTTPS"]) ? '' : ($_SERVER["HTTPS"] == "on") ? "s" : "";
+	$protocol = substr(strtolower($_SERVER["SERVER_PROTOCOL"]), 0, strpos(strtolower($_SERVER["SERVER_PROTOCOL"]), "/")) . $s;
+	$port = ($_SERVER["SERVER_PORT"] == 80) ? "" : (":" . $_SERVER["SERVER_PORT"]);
+	$requestURI = explode("?", $_SERVER["REQUEST_URI"]);
+	return $protocol . "://" . $_SERVER["SERVER_NAME"] . $port . $requestURI[0];
+}
+
+function googleAPI_help($path, $arg) {
+	$output = '';
+	
+	switch($path) {
+		case "admin/help#googleAPI":
+			$output = '<p>' . t("Helps integrate Drupal sites with the Google API.");
+			break;
+	}
+	return $output;
+}
+
+
+function googleAPI_config($form) {
+	
+	$form = array();
+	$client = new apiClient();
+	$service = new apiAnalyticsService($client);
+
+	$form['googleApiClientId'] = array(
+		'#type' => 'textfield',
+		'#title' => t('Client ID'),
+		'#default_value' => variable_get('googleApiClientId', ''),
+		'#size' => 30,
+		'#description' => t('Client ID created for the app in the Google API Console'),
+	);
+
+	$form['googleApiClientSecret'] = array(
+		'#type' => 'textfield',
+		'#title' => t('Client Secret'),
+		'#default_value' => variable_get('googleApiClientSecret', ''),
+		'#size' => 30,
+		'#description' => t('Client Secret created for the app in the Google API Console'),
+	);
+	if (!variable_get("googleApiAccessToken", "") || !variable_get("googleApiRefreshToken", "")) {
+		if ($_GET['code']) {
+			$client = new AuthenticatedClient($client, 'full_auth');
+			
+			if ($client) {
+				$profiles = get_profiles($service);
+				
+				$form['googleAnalyticsProfile'] = array(
+					'#type' => 'select',
+					'#title' => 'Select a profile: ',
+					'#options' => $profiles,
+					'#default_value' => variable_get('googleAnalyticsProfile', ""),
+				);	
+				
+				$form['save'] = array(
+					'#type' => 'submit',
+					'#value' => 'Save',
+					'#submit' => array('googleAPI_config_save'),
+				);
+				$form['deauth'] = array(
+					'#type' => 'submit',
+					'#value' => 'Deauthenticate',
+					'#submit' => array('googleAPI_config_deauth'),
+				);
+				
+				drupal_set_message(t("Authentication successful."));
+			} else {
+				form_set_error('', t("Authentication failed. Please check Client ID and Client Secret."));
+			}
+		} else {
+			$form['auth'] = array(
+				'#type' => 'submit',
+				'#value' => 'Authenticate',
+				'#submit' => array('googleAPI_config_auth'),
+				);
+			}
+	} else {
+		if (variable_get("googleApiTokenExpires", "") < time()) {
+			$client = new AuthenticatedClient($client, 'refresh_token');
+		} else {
+			$client = new AuthenticatedClient($client, 'access_token');
+		}
+		
+		if ($client) {
+			$profiles = get_profiles($service);
+			
+			$form['googleAnalyticsProfile'] = array(
+				'#type' => 'select',
+				'#title' => 'Select a profile: ',
+				'#options' => $profiles,
+				'#default_value' => variable_get('googleAnalyticsProfile', ""),
+			);
+			
+			$form['save'] = array(
+				'#type' => 'submit',
+				'#value' => 'Save',
+				'#submit' => array('googleAPI_config_save'),
+			);
+			$form['deauth'] = array(
+				'#type' => 'submit',
+				'#value' => 'Deauthenticate',
+				'#submit' => array('googleAPI_config_deauth'),
+			);
+		} else {
+			form_set_error('', t("Authentication failed. Please check Client ID and Client Secret."));
+		}
+	}
+	
+	return $form;
+}
+
+function googleAPI_config_validate($form, &$form_state) {
+	if (!$form_state['values']['googleApiClientId'] || !$form_state['values']['googleApiClientSecret']) {
+		form_set_error('', t('You must enter a valid client ID and client Secret.'));
+	}
+}
+
+function googleAPI_config_auth($form, &$form_state) {
+	variable_set("googleApiClientId", $form_state['values']['googleApiClientId']);
+	variable_set("googleApiClientSecret", $form_state['values']['googleApiClientSecret']);
+	
+	$client = new apiClient();
+	$client = new AuthenticatedClient($client, 'full_auth');
+	
+	echo "Hello";
+}
+
+function googleAPI_config_deauth($form, &$form_state) {
+	variable_del("googleApiClientId");
+	variable_del("googleApiClientSecret");
+	variable_del("googleApiAccessToken");
+	variable_del("googleApiRefreshToken");
+	variable_del("googleApiTokenExpire");
+	variable_del("googleApiFullResponse");
+	variable_del("googleAnalyticsProfile");
+	
+	drupal_set_message("Site successfully deauthenticated.");
+}
+
+function googleAPI_config_save($form, &$form_state) {
+	if ($form_state['values']['googleApiClientId'] != variable_get("googleApiClientId", "") || $form_state['values']['googleApiClientSecret'] != variable_get("googleApiClientSecret", "")) {
+		variable_set("googleApiClientId", $form_state['values']['googleApiClientId']);
+		variable_set("googleApiClientSecret", $form_state['values']['googleApiClientSecret']);
+		googleAPI_config_auth($form, $form_state);
+	}
+	
+	variable_set("googleAnalyticsProfile", $form_state['values']['googleAnalyticsProfile']);
+	
+	drupal_set_message("Settings saved.");
+}
+
+function googleAPI_menu() {
+	$items = array();
+	
+	$items['siteAnalytics'] = array(
+		'title' => 'Site Analytics',
+		'page callback' => 'googleAPI_all',
+		'access arguments' => array('access googleAPI content'),
+		'weight' => 9,
+		'type' => MENU_NORMAL_ITEM,
+	);
+	
+	$items['admin/settings/googleAPI'] = array(
+		'title' => t('Google API Settings'),
+		'description' => t('Google API configuration page'),
+		'page callback' => 'drupal_get_form',
+		'page arguments' => array('googleAPI_config'),
+		'access arguments' => array('access googleAPI content'),
+		'type' => MENU_CALLBACK,
+	);
+	
+	return $items;
+}
+
+function googleAPI_all() {
+	$output = "";
+	$client = new apiClient();
+	$service = new apiAnalyticsService($client);
+	
+	if (variable_get('googleApiAccessToken', '')) {
+		if (variable_get('googleApiTokenExpires', '') < time()) {
+			$client = new AuthenticatedClient($client, 'refresh_token');
+		} else {
+			$client = new AuthenticatedClient($client, 'access_token');
+		}
+
+		if ($client) {
+			$data = $service->data_ga->get(
+				'ga:' . variable_get("googleAnalyticsProfile", ""),
+				'2005-01-01',
+				date('Y-m-d'),
+				'ga:visits,ga:pageviews',
+				array(
+					'fields' => 'totalsForAllResults',
+				)
+			);
+			foreach ($data as $elem) {
+				$output .= "<li>Visits: " . $elem['ga:visits'] . "</li><li>Page Views: " . $elem['ga:pageviews'] . "</li>";
+			}
+		} else {
+			$output .= "<p>Google API authentication failed. Please " . l('configure Google API', 'admin/settings/googleAPI') . ".</p>";
+		}
+		
+	} else {
+		$output .= "<p>Please " . l('configure Google API', 'admin/settings/googleAPI') . ".</p>";
+	}
+	
+	return $output;
+}
