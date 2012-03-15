@@ -21,8 +21,8 @@ Copyright (c) 2012-2013 Jon Plaut
 * THE SOFTWARE.
 */
 
-require_once("google-api-php-client/src/apiClient.php");
-require_once("google-api-php-client/src/contrib/apiAnalyticsService.php");
+require_once("google-api-php-client/apiClient.php");
+require_once("google-api-php-client/contrib/apiAnalyticsService.php");
 
 define("SCOPE", "https://www.googleapis.com/auth/analytics.readonly");
 
