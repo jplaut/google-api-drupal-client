@@ -32,10 +32,9 @@ require_once("google-api-php-client/contrib/apiAnalyticsService.php");
 define("SCOPE", "https://www.googleapis.com/auth/analytics.readonly");
 
 /*
-* Object that takes an unauthenticated ApiClient and returns either a
+* Takes an unauthenticated ApiClient and returns either a
 * fully authenticated client or Null if no authentication has been requested 
 */
-
 class AuthenticatedClient {
 	public $unauthenticatedClient;
 	public $service;
@@ -68,26 +67,7 @@ class AuthenticatedClient {
 	}
 	
 	/*
-	* Authenticates a client using a valid refresh token and saves the variables
-	* to the database. Returns authenticated client, or Null if unsuccessful.
-	*/
-	protected function refresh_token() {
-		$this->unauthenticatedClient -> setClientId(variable_get("googleApiClientId", ""));
-		$this->unauthenticatedClient -> setClientSecret(variable_get("googleApiClientSecret", ""));
-		$this->unauthenticatedClient -> refreshToken(variable_get('googleApiRefreshToken', ""));
-		
-		try{
-			$this->client = $this->unauthenticatedClient;
-			self::set_google_api_variables();
-		}
-		catch (Exception $e) {
-			drupal_set_message(t("Authentication failed. Please check Client ID and Client Secret."), 'error', false);
-			$this->client = Null;
-		}
-	}
-	
-	/*
-	* Authenticates a client using Client ID and Client Secret and saves the variables
+	* Authenticates a client using Client ID and Client Secret and saves the returned tokens
 	* to the database. Returns authenticated client, or Null if unsuccessful.
 	*/
 	protected function full_auth() {
@@ -111,6 +91,25 @@ class AuthenticatedClient {
 	}
 	
 	/*
+	* Authenticates a client using a valid refresh token and saves the variables
+	* to the database. Returns authenticated client, or Null if unsuccessful.
+	*/
+	protected function refresh_token() {
+		$this->unauthenticatedClient -> setClientId(variable_get("googleApiClientId", ""));
+		$this->unauthenticatedClient -> setClientSecret(variable_get("googleApiClientSecret", ""));
+		$this->unauthenticatedClient -> refreshToken(variable_get('googleApiRefreshToken', ""));
+		
+		try{
+			$this->client = $this->unauthenticatedClient;
+			self::set_google_api_variables();
+		}
+		catch (Exception $e) {
+			drupal_set_message(t("Authentication failed. Please check Client ID and Client Secret."), 'error', false);
+			$this->client = Null;
+		}
+	}
+	
+	/*
 	* Authenticates a client using a valid access token and returns authenticated client, 
 	* or Null if unsuccessful.
 	*/
@@ -126,8 +125,7 @@ class AuthenticatedClient {
 	}
 	
 	/*
-	* Authenticates a client using Client ID and Client Secret and saves the variables
-	* to the database. Returns authenticated client, or Null if unsuccessful.
+	* Returns Google OAuth URL for provided client information
 	*/
 	public function get_auth_url() {
 		$this->unauthenticatedClient -> setClientId(variable_get("googleApiClientId", ""));
@@ -163,13 +161,11 @@ class AuthenticatedClient {
 /*
 * Object that takes an AuthenticatedClient and returns a form array
 */
-class GoogleConfigForm {
-	public $client;
-	private $isAuthenticated;
+class GoogleApiConfigForm {
+	private $client;
 	
 	public function __construct($client) {
 		$this->client = $client;
-		$this->isAuthenticated = $this->client -> is_authenticated();
 	}
 	
 	public function make_form() {
@@ -190,7 +186,7 @@ class GoogleConfigForm {
 			'#description' => t('Client Secret created for the app in the Google API Console'),
 		);
 
-		if ($this->isAuthenticated) {
+		if ($this->client -> is_authenticated()) {
 			try{
 				// If authentication was successful, try to get list of profiles
 				$profiles = self::get_profiles($this->client->service);
@@ -212,7 +208,7 @@ class GoogleConfigForm {
 			}
 		}
 
-		if (!$this->isAuthenticated) {
+		if (!$this->client -> is_authenticated()) {
 			// If site is not authenticated, add standard submit buttons
 			$form['auth'] = array(
 				'#type' => 'submit',
@@ -238,7 +234,7 @@ class GoogleConfigForm {
 	}
 	
 	/*
-	* Query Google for Analytics profiles and formats them for use in 
+	* Query Google for Analytics profiles and format them for use in 
 	* config form
 	*/
 	protected function get_profiles($service) {
@@ -275,6 +271,33 @@ function delete_googleAPI_vars() {
 	variable_del("googleAnalyticsProfile");
 }
 
+
+/*
+* Implements hook_menu
+*/
+function googleAPI_menu() {
+	$items = array();
+	
+	$items['siteAnalytics'] = array(
+		'title' => 'Site Analytics',
+		'page callback' => 'googleAPI_all',
+		'access arguments' => array('access googleAPI content'),
+		'weight' => 9,
+		'type' => MENU_NORMAL_ITEM,
+	);
+	
+	$items['admin/settings/googleAPI'] = array(
+		'title' => t('Google API Settings'),
+		'description' => t('Google API configuration page'),
+		'page callback' => 'drupal_get_form',
+		'page arguments' => array('googleAPI_config'),
+		'access arguments' => array('access googleAPI content'),
+		'type' => MENU_CALLBACK,
+	);
+	
+	return $items;
+}
+
 /*
 * Implements hook_help
 */
@@ -295,7 +318,7 @@ function googleAPI_help($path, $arg) {
 function googleAPI_config($form) {
 	$client = new AuthenticatedClient($unauthenticatedClient);
 	
-	$form = new GoogleConfigForm($client);
+	$form = new GoogleApiConfigForm($client);
 	$form = $form -> make_form();
 	
 	return $form;
@@ -324,9 +347,9 @@ function googleAPI_config_auth($form, &$form_state) {
 	
 	$authURL = new AuthenticatedClient();
 	$authURL = $authURL -> get_auth_url();
-
-	header("Location: " . $authURL);
 	
+	header("Location: " . $authURL);
+
 	echo "Error.";
 }
 
@@ -360,34 +383,8 @@ function googleAPI_config_save($form, &$form_state) {
 }
 
 /*
-* Implements hook_menu
-*/
-function googleAPI_menu() {
-	$items = array();
-	
-	$items['siteAnalytics'] = array(
-		'title' => 'Site Analytics',
-		'page callback' => 'googleAPI_all',
-		'access arguments' => array('access googleAPI content'),
-		'weight' => 9,
-		'type' => MENU_NORMAL_ITEM,
-	);
-	
-	$items['admin/settings/googleAPI'] = array(
-		'title' => t('Google API Settings'),
-		'description' => t('Google API configuration page'),
-		'page callback' => 'drupal_get_form',
-		'page arguments' => array('googleAPI_config'),
-		'access arguments' => array('access googleAPI content'),
-		'type' => MENU_CALLBACK,
-	);
-	
-	return $items;
-}
-
-/*
 * Called when user accesses the "Site Analytics" page.
-* Displays Google Analytics data.
+* Can be replaced with current analytics display code.
 */
 function googleAPI_all() {
 	$output = "";
